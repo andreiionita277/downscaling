@@ -1,0 +1,87 @@
+# Bucegi 2017 PILOT of the Meridional Carpathians Zarr workflow.
+# Same year, DEM grid and mask as the old run in ~/Bucegi (config_2017_Bucegi.yml), so the two can be compared,
+# but with the zarr chain: EDH ERA5 -> TopoSUB -> topo_scale_zarr, month by month into one yearly store,
+# then daily statistics and daily GeoTIFFs.
+# Run with (native, no Docker; the env must have the Rila-Pirin TopoPyScale fork installed, see README.md):
+#   python meridionali_zarr/scripts/run_year.py meridionali_zarr/config/config_bucegi_2017.yml
+project:
+  name: Bucegi 2017 zarr pilot
+  description: Pilot of the Meridional Carpathians zarr workflow on the Bucegi subdomain (FABDEM 30 m, Stereo70)
+  authors:
+    - Ionita A.
+    - Filhol S.
+  date: 2026-10-15
+  directory: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/bucegi_2017
+  start: 2017-01-01
+  end: 2017-12-31
+  split:
+    IO: False                             # time splitting is NetCDF-only; run_year.py does months
+    time: 1
+    space: None
+  climate: era5
+  extent:                                 # empty = from the DEM (+0.4 deg). The old configs had
+                                          # [45.33, 22.36, 45.12, 23.14] = Retezat, not Bucegi (25.3-25.6 E)
+  parallelization:
+    downscaling_method: multicore
+    setting:
+      multicore:
+        CPU_cores: 20                     # this machine: 24 threads
+      dask:
+        n_workers: 4
+        threads_per_worker: 1
+        memory_target_fraction: 0.95
+        memory_limit: 1.2GB
+
+climate:
+  precip_lapse_rate: True
+  era5:
+    path: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_bucegi
+    product: reanalysis
+    timestep: 1h                          # lowercase (pandas 3)
+    plevels: [600,650,700,750,775,800,825,850,875,900,925,950,975,1000]   # EDH serves only 600/700/850/925/1000
+    download_threads: 4
+    data_repository: edh                  # needs an EDH key in ~/.netrc or EDH_TOKEN (not set up on this machine yet)
+    edh_output_format: zarr
+    edh_max_concurrency: 8
+    realtime: False
+    rm_daily: False
+    zarr_store: ERA5.zarr
+
+dem:
+  path: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/dem/bucegi
+  file: dem.tif                           # -> ~/Bucegi/inputs/dem/FABDEM_Bucegi.tif (chosen over ARCDEM/EU-DEM, see README)
+  epsg: 3844                              # Pulkovo 1942(58) / Stereo70
+  horizon_increments: 10
+  solar_position_method: nrel_numpy
+
+sampling:
+  method: toposub
+  toposub:
+    clustering_method: minibatchkmean
+    n_clusters: 100                       # old run: 30. ~328k masked pixels; check with scripts/k_analysis.py
+    random_seed: 2
+    clustering_features: {'x':1, 'y':1, 'elevation':4, 'slope':1, 'aspect_cos':1, 'aspect_sin':1, 'svf':1}   # old run: elevation 3
+    clustering_mask: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/dem/bucegi/mask.tif
+
+toposcale:
+  interpolation_method: idw
+  LW_terrain_contribution: True
+
+outputs:
+  directory: outputs
+  variables: all
+  file:
+    clean_outputs: False                  # must stay False: True deletes the outputs folder at start
+    clean_FSM: False
+    df_centroids: df_centroids.pck
+    ds_param: ds_param.zarr               # '.zarr' -> cached as Zarr (fork feature)
+    ds_solar: ds_solar.zarr
+    da_horizon: da_horizon.zarr
+    landform: landform.tif
+    downscaled_pt: down_pt_*.nc           # not used (zarr_store is set)
+    zarr_store: down.zarr                 # hourly output, one store for the year
+    zarr_store_start: 2017-01-01
+    zarr_store_end: 2017-12-31
+
+clean_up:
+  rm_tmp_dirs: True
