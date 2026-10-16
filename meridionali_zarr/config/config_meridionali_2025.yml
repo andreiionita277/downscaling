@@ -46,7 +46,7 @@ climate:
     timestep: 1h
     plevels: [600,650,700,750,775,800,825,850,875,900,925,950,975,1000]   # EDH serves only 600/700/850/925/1000
     download_threads: 4
-    data_repository: edh                  # needs an EDH key in ~/.netrc or EDH_TOKEN (not on this machine yet)
+    data_repository: edh                  # EDH key in ~/.netrc (set up 2026-10-15)
     edh_output_format: zarr
     edh_max_concurrency: 8
     realtime: False

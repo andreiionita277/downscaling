@@ -208,3 +208,156 @@ cd ~/TopoPyScale-repo-github/downscaling
   (no `--stop-after`) into `data/logs/run_<time>.log`. The finished caches (ds_param, df_centroids,
   ds_solar) and ERA5 are reused.
 - Why not stop it now: it is ~1.2 h into the single-core sky-view factor, which cannot be resumed.
+
+### 20. Progress (15:18): sky-view factor slower than estimated
+- Still in `compute_dem_param` after 1 h 43 min (single core, RSS ~9 GB stable, no error).
+- The estimate in §18 counted only the horizon call. Per direction, `topocalc.viewf` also runs ~10
+  whole-array numpy operations on 46 M px (arccos, cos, sqrt, masked add). Diagonal directions are
+  slower (82 s at 45° vs 59 s at 0°). My timing tests ran alongside it, which also cost some time.
+  Revised: ~95-110 min, plus writing ds_param.nc (complevel 9).
+- This single step costs ~2 h at 46 M px, so parallelising svf (§18) is the first optimisation for the next run.
+
+### 21. Git (user)
+- The user committed `meridionali_zarr/` (data/ excluded by its .gitignore; 14 small files checked
+  with `git diff --cached --stat`) and pushed to github.com/andreiionita277/downscaling.
+- 403 at first: the push authenticated as GitHub user `andreiionita27` (via VS Code), but the repo
+  belongs to `andreiionita277`. Changing `user.name`/`user.email` does not affect authentication; the user resolved it.
+- Notes for later: 76 files differed only in line endings (Windows CRLF in the working copy vs LF in the
+  repo), so they should not be committed as changes. A 97 MB DEM is already in the repo's history
+  (GitHub limit: 100 MB per file).
+
+### 22. Terrain parameters done (16:14)
+- `compute_dem_param`: **9077 s (2 h 31 min)**, almost all of it the single-core sky-view factor.
+  `ds_param.nc` 321 MB (int16-packed).
+- Sanity check: 9521 x 4831, no NaN; elevation 64.5-2518.5 m, slope 0-1.27 rad (0-73°),
+  svf 0.455-1.000. Plausible for the Southern Carpathians at 30 m.
+- The main run moved on to `extract_topo_param` (k = 2000) at 16:14.
+
+### 23. k test started (16:16)
+- Snapshot `outputs/k_quick/ds_param_snapshot.nc` (copy, see §17), then:
+  ```
+  OMP_NUM_THREADS=8 ../venv/bin/python meridionali_zarr/scripts/k_quick.py \
+      meridionali_zarr/config/config_meridionali_2025.yml \
+      --ds-param meridionali_zarr/data/meridionali_2025/outputs/k_quick/ds_param_snapshot.nc
+  ```
+- 8 threads, so it does not slow the main clustering much (24 threads in total).
+
+### 24. Config comment fixed (user asked to see the config)
+- The `data_repository` comment still said there was no EDH key; changed to "EDH key in ~/.netrc
+  (set up 2026-10-15)". Comment only; the running job read the config at start.
+
+### 25. k test result (16:31): **k = 2000 kept**
+10 M-pixel sample (21.75 % of 45.98 M masked px), 14 min 41 s, peak RSS 4.7 GB.
+Figure: `data/meridionali_2025/outputs/k_quick/k_quick.png`; numbers: `results.csv`, `summary.json`.
+
+| k | elev. RMSE all (m) | ≈ K (6.5 K/km) | 0-500 | 500-1000 | 1000-1500 | 1500-2000 | 2000-3000 m |
+|---|---|---|---|---|---|---|---|
+| 500 | 63.6 | 0.41 | 53.0 | 65.8 | 75.1 | 82.3 | 105.1 |
+| 1000 | 55.3 | 0.36 | 46.5 | 57.2 | 65.7 | 69.9 | 89.1 |
+| **2000** | **47.2** | **0.31** | 39.2 | 48.7 | 55.9 | 60.8 | 82.7 |
+| 3000 | 43.4 | 0.28 | 36.0 | 45.2 | 50.7 | 56.4 | 73.0 |
+| 4000 | 40.7 | 0.26 | 33.6 | 42.3 | 47.8 | 52.8 | 71.3 |
+
+- Gain per additional 1000 clusters: 16.6 m (500→1000), 8.1 (1000→2000), **3.8 (2000→3000)**,
+  2.7 (3000→4000). The curve flattens after 2000: doubling to 4000 gains 6.5 m (~0.04 K).
+- That residual is small next to the other errors: the model-vs-station error in Rila-Pirin was ~4 K
+  hourly, and dropping 9 pressure levels (EDH) cost ~0.5 K at high elevation in January.
+- **Decision: keep k = 2000** (already running). Same choice as the old 2024 Meridionali config.
+- **Lowlands take most clusters** (k = 2000): pixels by band 45 / 34 / 14 / 6 / 1 %; clusters by
+  band (centre elevation) 671 / 726 / 363 / 189 / 51. So 0-1000 m gets ~70 % of the clusters. That
+  is because x/y are clustering features, which spread clusters by area.
+- **Mountains have the largest errors:** 61 m (1500-2000 m) and 83 m (2000-3000 m) ≈ 0.4-0.54 K.
+  Raising k helps them only slowly (83 → 71 m at k = 4000). Better options for a later run:
+  (a) a mask limited to the mountains, (b) `clustering_groups` (TopoPyScale's per-group clustering) with
+  more clusters for the high bands, or (c) a higher elevation weight. **To discuss with the user.**
+
+### 26. Clustering memory (16:32)
+- `extract_topo_param` (k = 2000 on 46 M px): after 16 min, RSS **17.2 GB**, 2.7 GB in swap,
+  ~5.6 GB RAM still available.
+- Known heavy end of this step (fork code, topoclass.py ~465-480): cluster labels → zero-padded
+  strings for 46 M pixels (pandas object strings), stored twice in ds_param (`cluster_labels`,
+  `point_name`), then rewritten to ds_param.nc. Expect several more GB, partly in swap (32 GB).
+- Not interrupted: the running process cannot be changed. If it is killed (OOM), the watcher reports it.
+  Fallback: make that step lighter (e.g. integer labels, strings built only at write time), then restart.
+  Terrain parameters (2.5 h) are cached and would not be recomputed.
+
+### 27. Terrain stage finished; full chain restarted (17:22)
+- Clustering survived: Mini-Batch K-means **3805 s** (63 min), whole `extract_topo_param` 3909 s;
+  ds_param.nc is now 4.4 GB (with cluster labels). `compute_solar_geometry` 103 s.
+- The watcher stopped the old job at the horizon step as planned (it still had the threaded horizon
+  code loaded), but the watcher itself was killed (exit 144) before it could restart. Restarted by hand:
+  `../venv/bin/python meridionali_zarr/scripts/run_year_public.py meridionali_zarr/config/config_meridionali_2025.yml`
+  → `data/logs/run_20261015_1722.log`. Cached steps loaded in ~2 min (the fork's `compute_dem_param`
+  re-opens ds_param.nc and saves it again through `outputs/tmp/`, values unchanged; costs ~2 min).
+
+### 28. Horizon, ERA5, downscaling (17:24-17:48)
+- `compute_horizon_batched`, 8 processes: 4 batches of 8 azimuths at ~260 s, last batch of 4 in 95 s,
+  **1141 s** (19 min) total; ~18 GB RAM used during a batch. Slower than the small-DEM estimate
+  (5-6 min), still far below the fork's ~40 GB single-process version. Sampling at centroids: 26 s.
+- `get_era5`: all 17 EDH blocks already on disk, 28 s.
+- `downscale_climate`: 2000 points × 8760 h on 20 cores in **234 s** (2.2 s per point per worker),
+  0 failed. Up to ~12 GB in swap, mostly the idle parent (it holds the terrain data); no slowdown.
+- 308 points (lowlands, Danube/Olt side) lie below the 1000 hPa geopotential at some hours: TopoPyScale
+  then uses surface pressure + the lowest level without vertical interpolation (its standard fallback).
+  Expected for a domain reaching 64 m; reported, not changed.
+
+### 29. Monthly products: January OK (17:48-18:04)
+- QA hourly OK: t −14.5..15.4 °C, no NaN in any variable.
+- **4 hourly SW values > 1400 W/m²** (max 1559, all SW_direct): TopoSCALE's known low-sun spike on steep
+  slopes facing the sun (direct beam divided by a small cos(zenith)). Reported only, as in Rila-Pirin.
+- daily_stats 3 s, write daily.zarr 1 s, pixel index 61 s (once), GeoTIFF export **287 s**,
+  GeoTIFF checks **550 s** (compare to daily.zarr at sample pixels and full band 1: max |diff| 4.8e-7 K).
+- t_mean/t_min/t_max GeoTIFFs, 31 bands each. **≈15 min per month → year done ≈ 21:00.**
+- The checks take the most time (they re-read the 46 M px band and compare every pixel). They could be
+  sampled for production runs; left as is for this pilot.
+
+### 30. Visual check of January (outputs/jan_check.png)
+- t_mean on 1 and 15 January next to the DEM (8× downsampled): the temperature field follows the
+  terrain (corr(t, elevation) = −0.76 on 15 Jan); ridges of Retezat/Parâng/Făgăraș are the coldest (≈ −10 °C
+  on 15 Jan); no cluster artefacts or NaN holes; valleys (Olt, Jiu) are visible.
+- 15 Jan shows an **inversion**: the Transylvanian basin (north, ~400-600 m) is colder (≈ −6 °C) than the
+  southern foothills at similar elevation (≈ −1 °C). That comes from the ERA5 pressure-level profile,
+  i.e. TopoSCALE is doing what it should, not a bug.
+- **Size: each monthly GeoTIFF is ~2.8 GB** (float32, 31 bands, DEFLATE without predictor), so the year is
+  ~100 GB for t mean/min/max. Fits (WSL disk 857 GB free, but it lives on C:, which has 252 GB free).
+  Not changed mid-run, so that all months are written the same way. For later: PREDICTOR=3 or int16 in
+  0.01 °C (scale/offset) would make the files ~3-5× smaller.
+
+### 31. RESULT: 2025 complete, all checks passed (20:24)
+`YEAR COMPLETE, ALL CHECKS PASSED`, exit 0. Run 17:22 → 20:24 (3 h 02 min wall), peak RSS of the main
+process 14.0 GB. Every month has status `ok` in `outputs/months/YYYY-MM.json`; summary in
+`outputs/year_summary.json`.
+
+| month | t hourly min..max (°C) | SW hours > 1400 W/m² (max) | time (s) |
+|---|---|---|---|
+| 01 | −14.5 .. 15.4 | 4 (1559) | 901 |
+| 02 | −18.2 .. 13.6 | 3 (2007) | 669 |
+| 03 | −15.5 .. 22.6 | 13 (1824) | 770 |
+| 04 | −16.6 .. 26.6 | 6 (1950) | 731 |
+| 05 | −6.5 .. 24.9 | 0 (993) | 760 |
+| 06 | 1.8 .. 35.3 | 14 (1859) | 720 |
+| 07 | 2.4 .. 35.4 | 6 (1630) | 757 |
+| 08 | 1.3 .. 34.2 | 13 (1915) | 756 |
+| 09 | −4.4 .. 30.8 | 0 (1320) | 716 |
+| 10 | −5.2 .. 20.6 | 7 (1757) | 761 |
+| 11 | −8.1 .. 20.7 | 0 (1305) | 729 |
+| 12 | −20.2 .. 16.1 | 0 (853) | 770 |
+
+- No NaN anywhere; all GeoTIFF bands match daily.zarr (max |diff| ~5e-7 K).
+- SW spikes: 66 point-hours out of 17.5 M (2000 points × 8760 h), all low-sun hours on steep slopes
+  (known TopoSCALE behaviour, reported only). Worth clipping/handling if SW is used later.
+- Outputs (`data/meridionali_2025/outputs/`):
+  - `downscaled/down.zarr` hourly, 2000 points × 8760 h, all variables, 1.6 GB
+  - `downscaled/daily.zarr` daily t mean/min/max (and the other daily stats), 95 MB
+  - `geotiff/t_{mean,min,max}_daily_2025-MM.tif`, 36 files, 30 m, EPSG:3844, one band per day, **87 GB**
+- Total time of the pilot including terrain: terrain params 2 h 31 min (svf, single core) + clustering
+  65 min + horizon 19 min + downscaling 4 min + products 2 h 30 min.
+- End-of-run warning "20 leaked semaphore objects" comes from joblib/loky workers of the downscaler at
+  shutdown: harmless.
+
+### 32. Suggested next steps (to discuss)
+1. GeoTIFF size: PREDICTOR=3 or int16 (0.01 °C) → ~3-5× smaller; sample-based checks → products ~2× faster.
+2. Mountain accuracy: mountain-only mask, `clustering_groups`, or higher elevation weight (§25).
+3. Speed: parallel svf (viewf) sharing directions with the horizon (§20).
+4. Validation against stations (as in Rila-Pirin).
+5. Get Nandhni's updated fork (Zarr caches, month-by-month filling) and drop the local shims.
