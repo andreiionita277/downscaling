@@ -361,3 +361,37 @@ process 14.0 GB. Every month has status `ok` in `outputs/months/YYYY-MM.json`; s
 3. Speed: parallel svf (viewf) sharing directions with the horizon (§20).
 4. Validation against stations (as in Rila-Pirin).
 5. Get Nandhni's updated fork (Zarr caches, month-by-month filling) and drop the local shims.
+
+---
+
+## 2026-10-21
+
+### 33. SURFEX-Crocus forcing for 2025 (`scripts/export_surfex.py`)
+- Request: the same export as `mp.to_surfex(year_start=..., year_end=...)` in the old Galesu script, for 2025 only.
+- New `scripts/export_surfex.py`: calls TopoPyScale's own `topo_export.to_surfex` with the arguments
+  `Topoclass.to_surfex` passes, on `downscaled/down.zarr` and `df_centroids.pck`. Nothing is re-run.
+  TopoPyScale itself is not changed; three local adaptations, all in the script:
+  1. `to_surfex` drops `vp, cse, cos_illumination, precip_lapse_rate`, intermediate variables of the NetCDF
+     downscaler that the Zarr store does not have → added as zeros so they can be dropped (never exported).
+     (First attempt failed on this, 13 s, nothing written.)
+  2. It reads LAT/LON from df_centroids columns `latitude/longitude`; this fork names them `lat/lon` →
+     copied under the expected names. (Second attempt failed on this.) Then tested on 5 points in a scratch folder.
+  3. **Bug in `topo_utils.time_vecs`: each yearly window ends at 00:00 of its last day, so `to_surfex` drops
+     the last 23 hours** (2025: 8737 of 8760 h). Here windows end at 23:00. `--fork-year-end` restores the
+     old behaviour. The old Galesu files have this gap: `~/GalesuDownscaling/outputs/FORCING_2022100100_2023093000.nc`
+     has 8737 h and ends on 2023-09-30 00:00.
+- Command:
+  ```
+  ../venv/bin/python meridionali_zarr/scripts/export_surfex.py meridionali_zarr/config/config_meridionali_2025.yml \
+      --start 2025-01-01 --end 2025-12-31 > meridionali_zarr/data/logs/surfex_2025_20261021_1532.log 2>&1
+  ```
+- Result: `outputs/FORCING_2025010100_2025123123.nc`, **2000 points × 8760 h**, 1.82 GB, NETCDF3_CLASSIC,
+  5 min 19 s, peak 2.4 GB RAM. Checks (in the script): all hours present, no NaN, Tair = store t exactly,
+  (Rainf + Snowf) × 3600 = tp, ZS = cluster elevations. Tair −20.2..35.4 °C (as the hourly QA),
+  snowfall 9.0 % of precipitation, ZS 82-2346 m.
+- Compared with the old Galesu forcing and with snowtools' reference `FORCING_test_base.nc`: same 22
+  variables, names, units, dims, float64 and format. Every reference variable is present. Differences:
+  `reference_time` absent (not read anywhere in `~/git/surfex/src`; not in the snowtools reference either),
+  `point_ind` added (cluster number; ignored by SURFEX).
+- As in all TopoPyScale SURFEX exports: `DIR_SWdown` = total SW and `SCA_SWdown` = 0 (the direct/diffuse split
+  exists in the store as SW_direct/SW_diffuse, if wanted later).
