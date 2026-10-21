@@ -213,22 +213,49 @@ def export_month(daily, idx, profile, geotiff_dir, var, stats, cfg, overwrite=Fa
     return files
 
 
-def check_month(files, daily, pn, mask_file, dem, var, n_pixels=1000, seed=0):
-    """Independent checks of this month's GeoTIFFs (as check_geotiff.py). Returns (ok, report)."""
+def check_prep(pn, mask_file, dem, point_names, n_pixels=1000, seed=0):
+    """The month-independent part of check_month, computed once and shared by all months/workers.
+
+    authors_idx is the position into `point_names` that topo_plot.map_variable's expression
+    ds[var].sel(point_name=<cluster map>) picks for every pixel, obtained by applying that same xarray
+    .sel to an index array (independent of pixel_index's pandas lookup).
+    """
     with rasterio.open(mask_file) as r:
         inside = r.read(1) == 1
     with rasterio.open(dem) as r:
-        dem_crs, dem_transform, dem_shape = r.crs, r.transform, (r.height, r.width)
-    report, ok = {}, True
+        grid = (r.crs, r.transform, (r.height, r.width))
     if not ((pn != '-9999') == inside).all():
-        return False, {'error': 'cluster map in ds_param and mask.tif disagree'}
+        raise ValueError('cluster map in ds_param and mask.tif disagree')
     rng = np.random.default_rng(seed)
     iy, ix = np.nonzero(inside)
     pick = rng.choice(len(iy), n_pixels, replace=False)
     py, px = iy[pick], ix[pick]
-    p_names = pn[py, px]
+    del iy, ix
+    point_names = np.asarray(point_names).astype(str)
+    fill = xr.DataArray(np.where(pn != '-9999', pn, point_names[0]), dims=('y', 'x'))
+    pos = xr.DataArray(np.arange(len(point_names)), dims='point_name', coords={'point_name': point_names})
+    authors_idx = pos.sel(point_name=fill).values
+    return dict(inside=inside, grid=grid, py=py, px=px, p_names=pn[py, px], authors_idx=authors_idx,
+                point_names=point_names)
+
+
+def check_month(files, daily, pn, mask_file, dem, var, n_pixels=1000, seed=0, prep=None):
+    """Independent checks of this month's GeoTIFFs (as check_geotiff.py). Returns (ok, report).
+
+    `prep` (from check_prep) can be passed to reuse the month-independent lookups; pn, mask_file and
+    dem are then not read.
+    """
+    if prep is None:
+        try:
+            prep = check_prep(pn, mask_file, dem, daily.point_name.values, n_pixels, seed)
+        except ValueError as e:
+            return False, {'error': str(e)}
+    if not np.array_equal(prep['point_names'], daily.point_name.values.astype(str)):
+        return False, {'error': 'daily points differ from those of the shared lookups'}
+    inside, py, px, p_names = prep['inside'], prep['py'], prep['px'], prep['p_names']
+    dem_crs, dem_transform, dem_shape = prep['grid']
+    report, ok = {}, True
     offset = OFFSET.get(var, 0.0)
-    fill = xr.DataArray(np.where(pn != '-9999', pn, daily.point_name.values[0]), dims=('y', 'x'))
     for f in files:
         stat = f.stem.split('_')[1]
         errs = []
@@ -245,7 +272,7 @@ def check_month(files, daily, pn, mask_file, dem, var, n_pixels=1000, seed=0):
                     break
                 expect = ref.isel(time=b - 1).sel(point_name=p_names).values
                 max_diff = max(max_diff, float(np.nanmax(np.abs(band[py, px] - expect))))
-            authors = ref.isel(time=0).sel(point_name=fill).values      # topo_plot.map_variable expression
+            authors = ref.isel(time=0).values[prep['authors_idx']]      # topo_plot.map_variable expression
             authors = np.where(inside, authors, NODATA).astype('float32')
             field_diff = float(np.abs(r.read(1) - authors).max())
             b1 = r.read(1)[inside]
@@ -262,6 +289,14 @@ def check_month(files, daily, pn, mask_file, dem, var, n_pixels=1000, seed=0):
               f'band-1 field max |diff| {field_diff:.1e}, band-1 range {b1.min():.2f}..{b1.max():.2f}'
               + (f'  <- {"; ".join(errs)}' if errs else ''), flush=True)
     return ok, report
+
+
+def rss_gb():
+    """Current resident memory of this process (GB, Linux)."""
+    for line in Path('/proc/self/status').read_text().splitlines():
+        if line.startswith('VmRSS:'):
+            return int(line.split()[1]) / 1e6
+    return float('nan')
 
 
 class Timer:
