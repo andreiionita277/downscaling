@@ -20,6 +20,7 @@ Every step is skipped when its output exists, so after a crash the same command 
 import argparse
 import gc
 import json
+import shutil
 import multiprocessing as mp_ctx
 import sys
 import time
@@ -51,6 +52,9 @@ def main():
     p.add_argument('--products-only', action='store_true',
                    help='only daily statistics + GeoTIFFs from an existing hourly store (no Topoclass, so the '
                         'main process, which the GeoTIFF workers copy, stays small)')
+    p.add_argument('--no-geotiff', action='store_true',
+                   help='daily statistics only, no GeoTIFFs (to save disk; they can be made later with '
+                        '--products-only from the hourly store)')
     p.add_argument('--horizon-batch', type=int, default=8,
                    help='azimuths computed at once (one process each, ~1 GB each at 46 M px)')
     a = p.parse_args()
@@ -154,7 +158,7 @@ def products(a, cfg, out, dem, year0, year1, timer, t_all, n_points):
         if rec.get('status') == 'error':
             break
 
-    if dailies:
+    if dailies and not a.no_geotiff:
         pts = next(iter(dailies.values())).point_name.values
         idx, profile, pn = timer('pixel_index', wf.pixel_index, ds_param_path, dem, pts)
         prep = timer('check_prep', wf.check_prep, pn, mask_file, dem, pts)
@@ -198,6 +202,8 @@ def close_month(ym, rec, a, months_dir, results):
         stats_ok = rec.get('stat_ok', {})
         if rec.get('errors'):
             rec['status'] = 'error'
+        elif rec['qa_ok'] and a.no_geotiff:
+            rec['status'] = 'ok (no GeoTIFF)'          # not 'ok': a later --products-only run makes them
         elif rec['qa_ok'] and len(stats_ok) == len(a.stats) and all(stats_ok.values()):
             rec['status'] = 'ok'
         else:
@@ -222,11 +228,30 @@ def _product_task(task):
     out = {}
     try:
         daily = _G['dailies'][ym]
+        final_dir = Path(_G['geotiff_dir'])
+        # When outputs/geotiff is a link to another drive (D: via /mnt/d), GDAL's many small writes there are
+        # far too slow (2026-10-21: ~0.3 MB/s per file). Then each file is written and checked in a local
+        # staging folder and copied to the link's target in one go once its checks passed.
+        staged = final_dir.is_symlink()
+        fname = f'{_G["var"]}_{stat}_daily_{pd.Timestamp(daily.time.values[0]):%Y-%m}.tif'
+        work_dir = final_dir.parent / 'geotiff_staging' if staged else final_dir
+        if staged and (final_dir / fname).exists() and not _G['overwrite']:
+            work_dir = final_dir                     # already delivered: check it where it is
         with rasterio.Env(GDAL_CACHEMAX=512):        # MB
-            files = mt('export_geotiff', wf.export_month, daily, _G['idx'], _G['profile'], _G['geotiff_dir'],
+            files = mt('export_geotiff', wf.export_month, daily, _G['idx'], _G['profile'], work_dir,
                        _G['var'], [stat], _G['cfg'], overwrite=_G['overwrite'])
             out['ok'], out['report'] = mt('check_geotiff', wf.check_month, files, daily, None, None, None,
                                           _G['var'], prep=_G['prep'])
+        if work_dir != final_dir and out['ok']:
+            t0 = time.time()
+            for f in files:
+                part = final_dir / (f.name + '.part')
+                shutil.copyfile(f, part)
+                if part.stat().st_size != f.stat().st_size:
+                    raise OSError(f'copy of {f.name} to {final_dir} is incomplete')
+                part.rename(final_dir / f.name)
+                f.unlink()
+            mt.t['copy_to_final'] = round(time.time() - t0, 1)
     except Exception:
         import traceback
         out['error'] = f'{ym} {stat}: ' + traceback.format_exc()

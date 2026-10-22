@@ -32,7 +32,7 @@ project:
     downscaling_method: multicore
     setting:
       multicore:
-        CPU_cores: 20                     # this machine: 24 threads
+        CPU_cores: 14                     # this machine: 24 threads; 14 since 2026-10-21 23:25 (20 workers + a background move ran out of RAM)
       dask:
         n_workers: 4
         threads_per_worker: 1
