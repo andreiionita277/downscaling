@@ -74,6 +74,12 @@ def main():
 
     # ---- terrain, once (Topoclass skips each step whose cache exists)
     timer('compute_dem_param', mp.compute_dem_param)
+    if not (mp.config.outputs.path / mp.config.outputs.file.df_centroids).is_file():
+        # With a cached ds_param.nc, the fork reopens it lazily (topo_param.py:275); extract_topo_cluster_param
+        # then rewrites that same file while it is open: HDF5 lock error, file left EMPTY. Load it, close the file.
+        ds = mp.toposub.ds_param
+        mp.toposub.ds_param = ds.load()
+        ds.close()
     timer('extract_topo_param', mp.extract_topo_param)
     timer('compute_solar_geometry', mp.compute_solar_geometry)
     f_hor = mp.config.outputs.path / mp.config.outputs.file.da_horizon
@@ -87,8 +93,14 @@ def main():
     if a.stop_after == 'terrain':
         return finish(out, int(len(mp.toposub.df_centroids)), timer, t_all, {}, a)
 
-    # ---- ERA5 (EDH -> ERA5.zarr; fetch_era5_edh resumes from its finished blocks)
-    timer('get_era5', mp.get_era5)
+    # ---- ERA5 (EDH -> ERA5.zarr; fetch_era5_edh resumes from its finished blocks), or, with
+    #      data_repository: local, only a check of the store prepared by zarr_workflow/era5_download (NCAR/CDS)
+    era = cfg['climate']['era5']
+    if era.get('data_repository') == 'local':
+        timer('get_era5', wf.check_era5_store, mp.config.climate.path / era['zarr_store'],
+              year0, year1, era.get('plevels'))
+    else:
+        timer('get_era5', mp.get_era5)
     if a.stop_after == 'era5':
         return finish(out, int(len(mp.toposub.df_centroids)), timer, t_all, {}, a)
 

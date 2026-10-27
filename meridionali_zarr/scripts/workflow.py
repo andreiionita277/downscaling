@@ -310,3 +310,29 @@ class Timer:
         self.t[name] = round(time.time() - t0, 1)
         print(f'========== {name} done in {self.t[name]} s', flush=True)
         return r
+
+
+# ---------------------------------------------------------------------------------- prepared ERA5 store
+# Copied unchanged from zarr_workflow/scripts/workflow.py (Nandhni, commit 2ac6bee, 2026-10-27).
+def check_era5_store(path, start, end, plevels):
+    """For climate.era5.data_repository 'local': the ERA5 Zarr store was prepared beforehand by
+    zarr_workflow/era5_download (CDS/NCAR). Check that it is complete for [start, end] instead of fetching:
+    every hour present and without NaN, levels ascending and equal to the config's plevels."""
+    ds = xr.open_zarr(path)
+    tvec = pd.date_range(pd.Timestamp(start), pd.Timestamp(end) + pd.Timedelta('23h'), freq='1h')
+    missing = tvec.difference(pd.DatetimeIndex(ds.time.values))
+    if len(missing):
+        raise ValueError(f'{path}: {len(missing)} hours of the run period missing, first {missing[:3].tolist()}')
+    lev = ds.level.values.astype(float)
+    if not np.all(np.diff(lev) > 0):
+        raise ValueError(f'{path}: levels must be ascending')
+    if plevels is not None and sorted(float(p) for p in plevels) != lev.tolist():
+        raise ValueError(f'{path}: levels {lev.tolist()} differ from config climate.era5.plevels {plevels}')
+    sub = ds.sel(time=tvec)
+    nan = {v: int(sub[v].isnull().sum()) for v in sub.data_vars}
+    bad = {v: n for v, n in nan.items() if n}
+    if bad:
+        raise ValueError(f'{path}: NaN in the run period {bad}; run era5_download.py download/status first')
+    print(f'---> ERA5 store {path}: complete for {tvec[0]:%Y-%m-%d} .. {tvec[-1]:%Y-%m-%d}, '
+          f'{len(lev)} levels {int(lev[0])}-{int(lev[-1])} hPa, {len(sub.data_vars)} variables, no NaN', flush=True)
+    return True

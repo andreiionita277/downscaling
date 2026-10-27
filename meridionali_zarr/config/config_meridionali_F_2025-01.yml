@@ -1,0 +1,94 @@
+# Meridional Carpathians, setup E (final choice) test: 1 January 2025, ERA5 600-1000 hPa (14 levels, NCAR), 3000 clusters in 4 elevation
+# groups (<800 / 800-1500 / 1500-2000 / >=2000 m, weights 0.25/0.375/0.1875/0.1875). See LOG_27Oct.md.
+# Chain: EDH ERA5 -> TopoSUB -> topo_scale_zarr (whole year into one hourly store, resumable per cluster)
+#        -> per month: daily statistics (daily.zarr) and daily GeoTIFFs (one file per month, one band per day).
+# Run with (native venv ../venv, PUBLIC TopoPyScale fork 7d54b9a; see LOG.md):
+#   python meridionali_zarr/scripts/run_year_public.py meridionali_zarr/config/config_meridionali_2024.yml
+#
+# Inputs: C:\Projects\NewDownscale (2026-10-15), prepared into data/dem/meridionali_2025/:
+#   dem.tif   = DEM_AOI_Meridionali.tif (FABDEM) regridded BILINEAR to exact 30 m square pixels on the
+#               original FABDEM grid (snapped inward, no nodata), EPSG:3844. The source had 29.998 x 29.999 m
+#               pixels and the deprecated "Dealul Piscului 1970" CRS (lat/lon ~126 m off).
+#               9521 x 4831 px = 46 M px, 64.5-2518.5 m.
+#   mask.tif  = AOI_Meridionali.shp rasterized on that grid (1 inside). The polygon is the DEM rectangle,
+#               so 99.95 % of the pixels are clustered, lowlands included.
+project:
+  name: Meridionali E 2025-01-01
+  description: Southern Carpathians 1 Jan 2025 test, FABDEM 30 m EPSG:3844, rectangle AOI, 3000 clusters in 4 elevation groups, ERA5 600-1000 hPa (NCAR)
+  authors:
+    - Ionita A.
+    - Filhol S.
+  date: 2026-10-27
+  directory: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/meridionali_F_2025
+  start: 2025-01-01
+  end: 2025-01-01                        # first test: one day
+  split:
+    IO: False                             # time splitting is NetCDF-only; run_year.py does months
+    time: 1
+    space: None
+  climate: era5
+  extent:                                 # empty = from the DEM (+0.4 deg for ERA5)
+  parallelization:
+    downscaling_method: multicore
+    setting:
+      multicore:
+        CPU_cores: 14                     # this machine: 24 threads; 14 since 2026-10-21 23:25 (20 workers + a background move ran out of RAM)
+      dask:
+        n_workers: 4
+        threads_per_worker: 1
+        memory_target_fraction: 0.95
+        memory_limit: 1.2GB
+
+climate:
+  precip_lapse_rate: True
+  era5:
+    path: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2025
+    product: reanalysis
+    timestep: 1h
+    plevels: [600,650,700,750,775,800,825,850,875,900,925,950,975,1000]   # all 14 ERA5 levels 600-1000 hPa (NCAR THREDDS)
+    download_threads: 4
+    data_repository: local                # store made by zarr_workflow/era5_download (config/era5/config_era5_meridionali_2025.yml); only checked
+    edh_output_format: zarr
+    edh_max_concurrency: 8
+    realtime: False
+    rm_daily: False
+    zarr_store: ERA5.zarr
+
+dem:
+  path: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/dem/meridionali_2025
+  file: dem.tif
+  epsg: 3844                              # Pulkovo 1942(58) / Stereo70
+  horizon_increments: 10                  # 36 azimuths; computed in batches by scripts/horizon_batched.py (fork's needs ~40 GB)
+  solar_position_method: nrel_numpy
+
+sampling:
+  method: toposub
+  toposub:
+    clustering_method: minibatchkmean
+    n_clusters: 3000                      # setup E (LOG_27Oct.md): 750 / 1125 / 563 / 563 per elevation group (fork rounds up: 3001)
+    random_seed: 2
+    clustering_features: {'x':1, 'y':1, 'elevation':4, 'slope':1, 'aspect_cos':1, 'aspect_sin':1, 'svf':1}
+    clustering_mask: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/dem/meridionali_2025/mask.tif
+    clustering_groups: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/dem/meridionali_F/groups.tif          # 1 <800, 2 800-1500, 3 1500-2000, 4 >=2000 m (from dem.tif)
+    clustering_group_weights: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/dem/meridionali_F/group_weights.csv  # 0.25/0.375/0.1875/0.1875 (sum exactly 1)
+
+toposcale:
+  interpolation_method: idw
+  LW_terrain_contribution: True
+
+outputs:
+  directory: outputs
+  variables: all
+  file:
+    clean_outputs: False                  # must stay False: True deletes the outputs folder at start
+    clean_FSM: False
+    df_centroids: df_centroids.pck
+    ds_param: ds_param.nc                 # NetCDF: the public fork has no Zarr caches
+    ds_solar: ds_solar.nc
+    da_horizon: da_horizon.nc             # written by horizon_batched.py (float32)
+    landform: landform.tif
+    downscaled_pt: down_pt_*.nc           # not used (zarr_store is set)
+    zarr_store: down.zarr                 # hourly, one store for the year (filled in one call, resumable per cluster)
+
+clean_up:
+  rm_tmp_dirs: True
