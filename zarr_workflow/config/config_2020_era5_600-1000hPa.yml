@@ -1,0 +1,86 @@
+# Rila-Pirin, year 2020, ERA5 on ALL levels 600-1000 hPa (14) -> TopoSUB (k=500, elevation weight 4) -> TopoSCALE
+# (topo_scale_zarr), month by month into one yearly hourly Zarr store, then daily statistics and daily GeoTIFFs.
+# Same settings as config_2025_era5_600-1000hPa.yml except the year: same 500 clusters (terrain/cluster/horizon
+# caches copied, they depend only on the DEM); the solar geometry is computed for 2020.
+# 1. ERA5:  python zarr_workflow/era5_download/era5_download.py zarr_workflow/era5_download/config_era5_2020.yml download
+# 2. Run:   python zarr_workflow/scripts/run_year.py zarr_workflow/config/config_2020_era5_600-1000hPa.yml
+# (inside the container; paths below are container paths, /app = the rila-pirin-downscaling repo)
+#
+# Every setting below is a decision recorded in the fork's PROGRESS.md (2026-10-13 and earlier).
+project:
+  name: Rila-Pirin 2020 zarr workflow, ERA5 600-1000 hPa
+  description: ERA5 (NCAR) 14 levels 600-1000 hPa, k=500, elevation weight 4, rectangle AOI mask, all caches as Zarr
+  authors:
+    - Nandhni, MSc GIS, West University of Timisoara
+  date: 2026-10-27
+  directory: /app/zarr_workflow/data/runs/2020_era5_600-1000hPa   # git-ignored; outputs/ of this run only
+  start: 2020-01-01                       # the year; run_year.py runs it month by month
+  end: 2020-12-31
+  split:
+    IO: False                             # the authors' time splitting is NetCDF-only; run_year.py does months
+    time: 1
+    space: None
+  climate: era5
+  extent:                                 # empty: taken from the DEM (+0.4 deg for ERA5, as in the authors' code)
+  parallelization:
+    downscaling_method: multicore
+    setting:
+      multicore:
+        CPU_cores: 20
+      dask:
+        n_workers: 4
+        threads_per_worker: 1
+        memory_target_fraction: 0.95
+        memory_limit: 1.2GB
+
+climate:
+  precip_lapse_rate: True
+  era5:
+    path: /app/zarr_workflow/data/era5_600-1000hPa/2020   # store made by zarr_workflow/era5_download (config_era5_2020.yml)
+    product: reanalysis
+    timestep: 1h
+    plevels: [600,650,700,750,775,800,825,850,875,900,925,950,975,1000]   # all ERA5 levels 600-1000 hPa (checked against the store)
+    download_threads: 4
+    data_repository: local                # prepared store: run_year.py only checks it (workflow.check_era5_store)
+    realtime: False
+    rm_daily: False
+    zarr_store: ERA5.zarr
+
+dem:
+  path: /app/zarr_workflow/data/dem
+  file: dem_25m_32634.tif                 # -> bulgaria_rila_pirin/inputs/dem/rila_pirin_dem_25m_buffered_32634_bilinear_resampling.tif
+  epsg: 32634
+  horizon_increments: 10
+  solar_position_method: nrel_numpy
+
+sampling:
+  method: toposub
+  toposub:
+    clustering_method: minibatchkmean
+    n_clusters: 500                       # user decision (diminishing returns of the cluster search)
+    random_seed: 2
+    clustering_features: {'x':1, 'y':1, 'elevation':4, 'slope':1, 'aspect_cos':1, 'aspect_sin':1, 'svf':1}   # user decision 2026-10-13
+    clustering_mask: /app/zarr_workflow/data/dem/mask.tif
+
+toposcale:
+  interpolation_method: idw
+  LW_terrain_contribution: True
+
+outputs:
+  directory: outputs
+  variables: all
+  file:
+    clean_outputs: False                  # must stay False: True deletes the outputs folder at start
+    clean_FSM: False
+    df_centroids: df_centroids.pck        # small table; kept as the authors' pickle
+    ds_param: ds_param.zarr               # '.zarr' -> cached as Zarr store (fork change 2026-10-13)
+    ds_solar: ds_solar.zarr
+    da_horizon: da_horizon.zarr
+    landform: landform.tif
+    downscaled_pt: down_pt_*.nc           # not used (zarr_store is set)
+    zarr_store: down.zarr                 # hourly output, one store for the year
+    zarr_store_start: 2020-01-01          # store period = the year; each monthly run fills its slice
+    zarr_store_end: 2020-12-31
+
+clean_up:
+  rm_tmp_dirs: True

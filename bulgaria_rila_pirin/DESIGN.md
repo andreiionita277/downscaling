@@ -7,6 +7,9 @@ append-only operational output). If you're trying to understand a design
 choice rather than "what happened when," this is the file to read — and to
 keep updated when a design choice changes, so it doesn't go stale.
 
+How the code itself works (every module and step of the original TopoPyScale, then of our
+modified Zarr version, side by side) is in `TOOL_ARCHITECTURE.md`.
+
 ## Current design (updated 2026-10-13); supersedes parts of the sections below
 
 The sections below date from 2026-09-30 and describe the CDS/NetCDF plan. Since then the design changed;

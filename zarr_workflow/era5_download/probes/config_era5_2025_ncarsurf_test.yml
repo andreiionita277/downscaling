@@ -1,0 +1,53 @@
+# TEST (2026-10-27): NCAR single levels vs CDS, January 2025, separate store.
+# ERA5 hourly for the Rila-Pirin zarr workflow, 2025: pressure levels 600-1000 hPa (all 14 ERA5 levels in that
+# range) + the 7 single-level variables TopoPyScale needs, into one Zarr store read by topo_scale_zarr.
+# Used by era5_download.py (download / import / status / verify). Paths are container paths (/app = rila-pirin-downscaling).
+# Why each number: LOG.md and REPORT.md in this folder (CDS limit, NCAR workaround, timings).
+
+period:
+  start: 2025-01-01            # first day (00:00 UTC)
+  end: 2025-12-31              # last day, included (23:00 UTC); topo_scale_zarr needs exactly this range
+
+area:                          # same 10 x 11 grid as the EDH store (zarr_workflow/data/era5/ERA5.zarr):
+  north: 43.0                  # DEM extent + 0.4 deg buffer, snapped outward to the 0.25 deg grid
+  west: 22.25
+  south: 40.75
+  east: 24.75
+
+# Every ERA5 level from 600 to 1000 hPa. 600 hPa (~4.2 km) is above the highest cluster (2554 m) and Musala
+# (2925 m) at all times, so vertical interpolation never extrapolates upward. User decision 2026-10-27.
+levels: [600, 650, 700, 750, 775, 800, 825, 850, 875, 900, 925, 950, 975, 1000]
+
+plev_vars: [z, t, u, v, q, r]                          # topo_scale_zarr.PLEV_VARS
+surf_vars: [z_surf, d2m, sp, strd, ssrd, tp, t2m]       # topo_scale_zarr SURF set
+
+source:
+  plev: ncar                   # ncar (THREDDS server-side subset, no queue, ~2.6 h/yr) | cds (~1 job at a time)
+  surf: ncar                   # TEST
+
+cds:
+  workers: 2                   # jobs submitted at once; the CDS RUNS ONE per user at a time (MARS limit 1)
+  # vars_per_request: unset -> automatic: 14 levels x 744 h x 3 vars = 31,248 items -> 2 requests per month
+  max_items_plev: 60000        # measured exact limit (GRIB), LOG.md step 1.3a
+  max_items_surf: 121000       # reported by the CDS for single levels (GRIB)
+  poll_seconds: 30
+  max_retries: 5               # per request; then the unit is marked failed and the run goes on
+  backoff_seconds: 120         # doubled after each failed attempt
+  request_timeout_hours: 24    # a job still queued after this is deleted and retried
+
+ncar:
+  workers: 16                  # parallel NCSS requests (Feb test: 168 units in 12 min, no throttling)
+  base_url: https://thredds.rda.ucar.edu/thredds/ncss/grid/files/g/d633000/e5.oper.an.pl
+  max_retries: 5
+  backoff_seconds: 60
+  timeout_seconds: 180         # normal request 20-45 s; some hang and are retried
+
+paths:
+  store: /app/zarr_workflow/data/era5_37/ncar_surf_test/ERA5.zarr   # climate.path + zarr_store in the workflow config
+  raw: /app/zarr_workflow/data/era5_37/ncar_surf_test/raw           # downloads, deleted after a verified write
+  state: /app/zarr_workflow/data/era5_37/ncar_surf_test/state       # manifest.jsonl + months/YYYY-MM.json reports
+  logs: /app/zarr_workflow/data/era5_37/ncar_surf_test/logs
+  edh_store: /app/zarr_workflow/data/era5/ERA5.zarr          # optional cross-check at the 5 shared levels
+
+store:
+  time_chunk: 744              # ~1 month x all levels x the whole box (written by one process only)

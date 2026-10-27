@@ -57,6 +57,12 @@ python3 -c "import TopoPyScale; print(TopoPyScale.__file__)"
 
 ## Environment build — resolved 2026-07-30
 
+> **Archived 2026-10-16.** This host `venv` and the fork clone it was installed from
+> (`TopoPyScale_Bulgaria_Rila_Pirin_Mountains` at 8668a5b, project root) were moved to
+> `~/nandhni/downscaling-topopyscale-project/_archive/archived-2026-10-16_july-host-setup/`.
+> Replaced by the Docker setup (`docker-compose.yml`, `docker/requirements.lock.txt`, fork in
+> `repo-github/fork-original-code/`). The section below is kept as history.
+
 Switched from plain pip/venv to `uv` mid-setup (see rationale: faster,
 manages Python versions itself, better lockfile story for reproducibility).
 

@@ -9,7 +9,9 @@ Once for the year (each step is skipped when its cache exists, TopoPyScale's own
     2 extract_topo_param      -> outputs/df_centroids.pck (TopoSUB, k-means on the masked pixels)
     3 compute_solar_geometry  -> outputs/ds_solar.zarr    (whole year)
     4 compute_horizon         -> outputs/da_horizon.zarr
-    5 get_era5                -> climate path/ERA5.zarr   (Earth Data Hub, resumable)
+    5 get_era5                -> climate path/ERA5.zarr   (Earth Data Hub, resumable; or, with
+                                 data_repository: local, only a completeness check of the store
+                                 prepared by zarr_workflow/era5_download)
 Then for every month (a month is skipped when outputs/months/<YYYY-MM>.json says it is complete):
     6 downscale_climate       -> its time slice of outputs/downscaled/down.zarr (hourly, whole year store)
     7 QA of the month's hourly values (no NaN, physical bounds)
@@ -59,7 +61,14 @@ def main():
     timer('extract_topo_param', mp.extract_topo_param)
     timer('compute_solar_geometry', mp.compute_solar_geometry)
     timer('compute_horizon', mp.compute_horizon)
-    timer('get_era5', mp.get_era5)
+    era = cfg['climate']['era5']
+    if era.get('data_repository') == 'local':
+        # the store was prepared by zarr_workflow/era5_download (CDS/NCAR, 600-1000 hPa): only check it
+        sel = [(m0, m1) for m0, m1 in wf.month_periods(year0, year1) if not a.months or m0.month in a.months]
+        timer('get_era5', wf.check_era5_store, mp.config.climate.path / era['zarr_store'],
+              sel[0][0], sel[-1][1], era.get('plevels'))     # the months this run will downscale
+    else:
+        timer('get_era5', mp.get_era5)
     year_timings = dict(timer.t)
     # Free memory: after a fresh computation Topoclass holds the full horizon (float64, ~7 GB) and
     # terrain arrays in memory (~20 GB RSS). The downscaler only needs the horizon angles already

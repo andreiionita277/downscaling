@@ -10,13 +10,19 @@ is the fork's `PROGRESS.md`; the design overview is `bulgaria_rila_pirin/DESIGN.
 ```
 zarr_workflow/
   config/config_2025.yml      all settings of the 2025 run (each one commented with its reason)
+  config/config_2025_era5_600-1000hPa.yml  the same run with ERA5 on all 14 levels 600-1000 hPa (CDS/NCAR)
+  era5_download/              downloads that ERA5 store (era5_download.py + config_era5_2025.yml;
+                              LOG.md/REPORT.md: CDS limit, NCAR workaround, timings, comparisons)
   scripts/run_year.py         runs the whole chain for one year, month by month (resumable)
   scripts/workflow.py         building blocks: QA, daily store, GeoTIFF export, GeoTIFF checks
+  scripts/run_full_year.sh    ERA5 download + verify + run_year for one year (600-1000 hPa configs)
   notebooks/view_results.ipynb  interactive viewer (maps per day, time series, monthly means)
   notebooks/make_viewer_notebook.py  generates the notebook (its code, reviewable in git)
   data/                       NOT in git (.gitignore)
     dem/                      symlinks: 25 m DEM, mask.tif, AOI rectangle, station list
-    era5/                     ERA5.zarr (+ edh_blocks/, the resumable download pieces)
+    era5/                     ERA5.zarr (+ edh_blocks/, the resumable download pieces)  [EDH, 5 levels]
+    era5_600-1000hPa/YYYY/    ERA5.zarr from era5_download (14 levels) + state/ (manifest, month checks), one folder per year
+    runs/YYYY_era5_600-1000hPa/outputs/   outputs of the 600-1000 hPa runs (same layout as outputs/)
     outputs/                  everything the run computes (below)
     logs/                     one log file per run
 ```
@@ -54,6 +60,26 @@ python zarr_workflow/scripts/run_year.py zarr_workflow/config/config_2025.yml \
 - Other variable for the GeoTIFFs: `--var tp --stats sum`.
 - To redo a step from scratch, delete its output (e.g. `df_centroids.pck` and `ds_param.zarr` to recluster).
 
+### Run with ERA5 on 600-1000 hPa (all 14 levels) instead of EDH's 5
+
+```bash
+# 1. ERA5 store (resumable; pressure levels from NCAR THREDDS, single levels from the CDS)
+python zarr_workflow/era5_download/era5_download.py zarr_workflow/era5_download/config_era5_2025.yml download
+python zarr_workflow/era5_download/era5_download.py zarr_workflow/era5_download/config_era5_2025.yml status
+python zarr_workflow/era5_download/era5_download.py zarr_workflow/era5_download/config_era5_2025.yml verify --spot-checks 5
+# 2. the workflow on it (get_era5 only checks the store: data_repository: local)
+python zarr_workflow/scripts/run_year.py zarr_workflow/config/config_2025_era5_600-1000hPa.yml \
+       > zarr_workflow/data/runs/2025_era5_600-1000hPa/logs/run_$(date +%Y%m%d_%H%M).log 2>&1
+```
+Its terrain/cluster/solar/horizon caches are copies of the EDH run's, so both runs use the same 500 clusters.
+
+Whole chain for one year in one command (ERA5 download -> status/verify -> run_year), e.g. 2020, entirely from NCAR
+(`config_era5_2020.yml` + `config_2020_era5_600-1000hPa.yml`; ds_solar is computed for that year, the DEM-only caches
+ds_param/df_centroids/da_horizon are copied into the run's outputs/ first):
+```bash
+bash zarr_workflow/scripts/run_full_year.sh 2020 > zarr_workflow/data/runs/2020_era5_600-1000hPa/logs/full_year_2020.out 2>&1
+```
+
 ## What happens, step by step
 
 Once for the year:
@@ -62,7 +88,8 @@ Once for the year:
    elevation ×4, slope, aspect cos/sin, svf) → `df_centroids.pck`, cluster map into `ds_param.zarr`
 3. `compute_solar_geometry`: sun position per cluster, every hour of the year → `ds_solar.zarr`
 4. `compute_horizon`: horizon angles → `da_horizon.zarr`, sampled per cluster into `df_centroids`
-5. `get_era5`: ERA5 hourly from the Earth Data Hub (levels 600/700/850/925/1000 hPa + surface) → `ERA5.zarr`
+5. `get_era5`: ERA5 hourly from the Earth Data Hub (levels 600/700/850/925/1000 hPa + surface) → `ERA5.zarr`;
+   with `data_repository: local` only a check of the store prepared by `era5_download` (all hours, no NaN, levels)
 
 For each month:
 
