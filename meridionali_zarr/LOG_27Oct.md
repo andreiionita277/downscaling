@@ -270,3 +270,39 @@ around the treeline, plus mean bias (pixel - centre; > 0 = centres too low). `--
   everywhere. -> boundary steps accepted for now; lapse-rate adjustment when mapping stays an optional refinement.
 - To check later: SW radiation / Crocus still distinguish north and south slopes (aspect), not only elevation.
 - Note for map comparisons in QGIS: set the same fixed min/max on both layers (default stretch is per layer).
+
+### 19:35: lapse-rate adjustment test (user: "let's test quickly"), 1 Jan 2025 daily mean
+- New `scripts/lapse_map_test.py`: per day and cluster a local lapse rate (linear fit of cluster daily mean vs centre
+  elevation over the 50 nearest clusters, clipped +-1.5 K/100 m), pixel = cluster value + lapse x (pixel elevation -
+  centre elevation). Writes a separate GeoTIFF `outputs/geotiff_lapse_test/t_mean_2025-01-01_lapse.tif` (tiled,
+  DEFLATE, AVERAGE overviews 2-32); stores and the original GeoTIFF unchanged. 35 s, 5.9 GB.
+  `../venv/bin/python meridionali_zarr/scripts/lapse_map_test.py meridionali_zarr/config/config_meridionali_F_2025-01.yml`
+- **My mistake, caught by the check:** first version had the sign reversed (pixel above its centre got warmer);
+  the steps grew (800 m 0.45 -> 0.61 K). Fixed (lapse = signed dT/dz, times pixel - centre elevation) and rerun.
+- 1 Jan local lapse: p5 -0.59, median -0.39, p95 +0.10 K/100 m (some inversion areas); 1 of 3001 clipped.
+  Adjustment: mean 0.000 K, 95 % of pixels < 0.17 K, max 1.16 K. Area mean unchanged (7.042 degC).
+- Boundary steps (mean T, 25 m slices just below -> just above), original -> adjusted:
+  800 m 0.45 -> 0.29 K; **1500 m 0.14 -> 0.02 K**; 2000 m 0.25 -> 0.18 K.
+  The part caused by centre elevation is removed; the rest at 800 and 2000 m comes from other differences between
+  the groups' clusters (position/size: lowland clusters ~38 km2, slope, svf), not from elevation.
+- Neighbour-to-neighbour difference above 1500 m: 0.074 -> 0.078 K (pixel-scale elevation detail added).
+- Figure `outputs/geotiff_lapse_test/compare_lapse_20250101.png`: the two maps look almost identical; difference
+  mostly within +-0.1 K, along the terrain.
+- Assessment: modest gain; not needed for production now. Can be applied to any day later from daily.zarr
+  (no re-downscaling). Worth reconsidering for the final isotherm maps.
+
+### 19:50: DECISION (user): elevation groups + lapse-rate adjustment for the temperature maps only
+- Formula (per pixel p of cluster k, per day): T(p) = T_k + Gamma_k * (z_p - z_k); Gamma_k = least-squares slope of
+  daily T vs centre elevation over the 50 nearest clusters (x/y), clipped +-1.5 K/100 m. Elevation only (not slope,
+  aspect, svf); one Gamma per cluster and day. Example 1 Jan, cluster 2664 (z_k 2200.4 m, T_k 2.078 degC,
+  Gamma -0.416 K/100 m, 1251 px at 2175-2221 m): pixels 2.181 / 2.072 / 1.992 degC at 2175 / 2202 / 2221 m;
+  cluster mean 2.078 -> 2.076.
+- **Applied only when making the temperature GeoTIFFs** (t_mean, t_min, t_max, each with its own daily Gamma).
+  NOT applied to down.zarr, daily.zarr or the SURFEX/Crocus forcing (they stay the TopoSCALE output per cluster),
+  nor to other variables' maps (precipitation, radiation, wind: cluster value per pixel).
+- Why: stores = physically consistent model output (Crocus needs it); the adjustment is a mapping choice whose
+  settings can change later and be re-applied in minutes without re-downscaling.
+- For statistics from the Zarr stores (band/area means): weight clusters by their pixel count (lowland clusters
+  ~38 km2, alpine ~0.7 km2). Cluster means are the same with or without the adjustment.
+- Next: build it into the GeoTIFF export (+ checks that recompute sample pixels with the formula; method in the
+  file metadata), test 1 Jan with min/mean/max.

@@ -8,6 +8,12 @@ table (df_centroids.pck).
 
     python meridionali_zarr/scripts/export_surfex.py meridionali_zarr/config/config_meridionali_2025.yml \
            --start 2025-01-01 --end 2025-12-31
+    # a period across two yearly runs (9 Nov 2026, setup E, hydrological year): give both configs
+    python meridionali_zarr/scripts/export_surfex.py meridionali_zarr/config/config_meridionali_E_2024.yml \
+           meridionali_zarr/config/config_meridionali_E_2025.yml --start 2024-09-01 --end 2025-08-31 \
+           --out meridionali_zarr/data/surfex_E
+With several configs the hourly stores are joined along time (they must have the same points, elevations, slopes,
+aspects and coordinates, checked); the file goes to --out (default: the outputs folder of the first config).
 
 Local adaptations (TopoPyScale itself is not changed):
 - to_surfex reads LAT/LON from df_centroids columns 'latitude'/'longitude'; this fork names them lat/lon.
@@ -34,7 +40,8 @@ from TopoPyScale import topo_utils as tu
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('config')
+    p.add_argument('config', nargs='+', help='one config, or several consecutive yearly configs of the same setup')
+    p.add_argument('--out', help='folder for the FORCING file (default: outputs folder of the first config)')
     p.add_argument('--start', required=True, help='start of the first year, e.g. 2025-01-01 or 2019-09-01')
     p.add_argument('--end', required=True, help='last day, e.g. 2025-12-31 or 2024-08-31')
     p.add_argument('--fname', default='FORCING*.nc', help='file name pattern (as Topoclass.to_surfex)')
@@ -42,12 +49,25 @@ def main():
     p.add_argument('--fork-year-end', action='store_true', help='keep the fork\'s window end (00:00 of the last day)')
     a = p.parse_args()
 
-    cfg = yaml.safe_load(Path(a.config).read_text())
-    out = Path(cfg['project']['directory']) / cfg['outputs'].get('directory', 'outputs')
-    store = out / 'downscaled' / cfg['outputs']['file']['zarr_store']
-    df = pd.read_pickle(out / cfg['outputs']['file']['df_centroids'])
-
-    ds = tz.open_downscaled_store(store)
+    parts, df = [], None
+    for c in a.config:
+        cfg = yaml.safe_load(Path(c).read_text())
+        o = Path(cfg['project']['directory']) / cfg['outputs'].get('directory', 'outputs')
+        d_c = pd.read_pickle(o / cfg['outputs']['file']['df_centroids'])
+        if df is None:
+            df, out = d_c, o
+        else:
+            for col in ('point_ind', 'point_name', 'elevation', 'slope', 'aspect', 'lat', 'lon'):
+                if col in df and not np.array_equal(df[col].values, d_c[col].values):
+                    raise ValueError(f'{c}: df_centroids column {col} differs from {a.config[0]} (not the same setup)')
+        parts.append(tz.open_downscaled_store(o / 'downscaled' / cfg['outputs']['file']['zarr_store']))
+    store = ' + '.join(str(Path(c).name) for c in a.config)
+    ds = parts[0] if len(parts) == 1 else xr.concat(parts, dim='time', data_vars='minimal', coords='minimal',
+                                                    compat='override', join='override')
+    ds = ds.sel(time=slice(pd.Timestamp(a.start), pd.Timestamp(a.end) + pd.Timedelta('23h')))
+    if a.out:
+        out = Path(a.out)
+        out.mkdir(parents=True, exist_ok=True)
     # topo_export.to_surfex looks up ZS/slope/aspect/LAT/LON by position (0..n-1 on both sides).
     if not np.array_equal(ds.point_ind.values, df.point_ind.values) or \
             not np.array_equal(ds.point_name.values.astype(str), df.point_name.values.astype(str)):

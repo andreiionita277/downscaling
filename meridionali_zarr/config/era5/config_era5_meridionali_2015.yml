@@ -1,0 +1,65 @@
+# written by Claude 6 Nov from config_era5_meridionali_2017.yml (ncar), year -> 2015, ncar workers 8 (user: "use multiple lanes"),
+# backoff 120 s (as driver version 4); NCAR test requested by the user, see LOG_28Oct2026.md
+period:
+  start: '2015-01-01'
+  end: '2015-12-31'
+area:
+  north: 46.5
+  west: 21.5
+  south: 44.25
+  east: 26.25
+levels:
+- 600
+- 650
+- 700
+- 750
+- 775
+- 800
+- 825
+- 850
+- 875
+- 900
+- 925
+- 950
+- 975
+- 1000
+plev_vars:
+- z
+- t
+- u
+- v
+- q
+- r
+surf_vars:
+- z_surf
+- d2m
+- sp
+- strd
+- ssrd
+- tp
+- t2m
+source:
+  plev: ncar
+  surf: ncar
+cds:
+  workers: 2
+  max_items_plev: 60000
+  max_items_surf: 60000
+  poll_seconds: 30
+  max_retries: 5
+  backoff_seconds: 120
+  request_timeout_hours: 24
+ncar:
+  workers: 8
+  base_url: https://thredds.rda.ucar.edu/thredds/ncss/grid/files/g/d633000/e5.oper.an.pl
+  max_retries: 5
+  backoff_seconds: 120
+  timeout_seconds: 600
+paths:
+  raw: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2015/raw
+  state: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2015/state
+  logs: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2015/logs
+  store: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2015/ERA5.zarr
+  edh_store: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_meridionali/ERA5.zarr
+store:
+  time_chunk: 744

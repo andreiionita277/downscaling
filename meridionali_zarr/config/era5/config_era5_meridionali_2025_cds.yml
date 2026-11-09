@@ -1,0 +1,64 @@
+# written by scripts/overnight_E.py from config_era5_meridionali_2025.yml (cds); see LOG_downscalingTest_Overnight.md
+period:
+  start: '2025-01-01'
+  end: '2025-12-31'
+area:
+  north: 46.5
+  west: 21.5
+  south: 44.25
+  east: 26.25
+levels:
+- 600
+- 650
+- 700
+- 750
+- 775
+- 800
+- 825
+- 850
+- 875
+- 900
+- 925
+- 950
+- 975
+- 1000
+plev_vars:
+- z
+- t
+- u
+- v
+- q
+- r
+surf_vars:
+- z_surf
+- d2m
+- sp
+- strd
+- ssrd
+- tp
+- t2m
+source:
+  plev: cds
+  surf: cds
+cds:
+  workers: 2
+  max_items_plev: 60000
+  max_items_surf: 60000
+  poll_seconds: 30
+  max_retries: 5
+  backoff_seconds: 120
+  request_timeout_hours: 24
+ncar:
+  workers: 8
+  base_url: https://thredds.rda.ucar.edu/thredds/ncss/grid/files/g/d633000/e5.oper.an.pl
+  max_retries: 5
+  backoff_seconds: 60
+  timeout_seconds: 600
+paths:
+  raw: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2025/raw
+  state: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2025/state
+  logs: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2025/logs
+  store: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa/2025/ERA5.zarr
+  edh_store: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_meridionali/ERA5.zarr
+store:
+  time_chunk: 744
