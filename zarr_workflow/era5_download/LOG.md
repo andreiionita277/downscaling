@@ -438,3 +438,9 @@ CDS spot checks (NCAR = CDS was shown above for all 13 variables).
 - QA t range per month from -16.4 degC (Jan/Feb) to 35.7 degC (Jul). SW > 1,400 W/m2: 46 values (max 2,026 W/m2), 14
   clusters, only 15-17 UTC = the known TopoSCALE sunset spike (reported, not a failure, see workflow.qa_hourly).
 - Harmless at exit: loky "leaked semaphore objects" warning (joblib workers, after the run finished).
+
+## 2026-11-06: raw files that fail conversion are set aside (rila_pirin_zarr run, NCAR 2006)
+- `ncar_plev_2006-05-29_z` failed twice with "cannot reshape array of size 0": the NCSS NetCDF on disk was corrupt
+  (normal size, unreadable) and `download_ncar` reuses an existing raw file, so the second pass could not fix it.
+- Change: when conversion/checks of a downloaded unit fail, the raw file moves to `<year>/raw_bad/` (kept for
+  inspection) and the next pass downloads it again. Re-download of that unit: OK in 1.6 min, 2006 verified.

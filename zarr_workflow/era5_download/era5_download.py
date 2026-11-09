@@ -668,6 +668,7 @@ def cmd_download(cfg, args):
             u = futs[fut]
             rec = {'id': u['id'], 'kind': u['kind'], 'src': u['src'], 'vars': u['vars'],
                    'months': [f'{y}-{m:02d}' for y, m in u['months']]}
+            path = None
             try:
                 path, st = fut.result()
                 rec['download'] = st
@@ -686,6 +687,13 @@ def cmd_download(cfg, args):
                 rec.update(status='failed', error=f'{type(e).__name__}: {e}'[:800])
                 n_fail += 1
                 log.error(f'{u["id"]}: FAILED: {rec["error"]}')
+                if path is not None and path.exists():
+                    # downloaded but unreadable/failed checks: set it aside, or every later pass reuses the same
+                    # bad file (2006-05-29 z, 2026-11-06: a corrupt NCSS NetCDF failed twice, fine on re-download)
+                    bad = path.parent.parent / 'raw_bad'
+                    bad.mkdir(exist_ok=True)
+                    os.replace(path, bad / path.name)
+                    log.warning(f'{u["id"]}: raw file moved to {bad.name}/ so the next pass downloads it again')
             append_manifest(cfg, rec)
             # month complete? -> validate it
             done = {k for k, r in read_manifest(cfg).items() if r['status'] in DONE_STATES}

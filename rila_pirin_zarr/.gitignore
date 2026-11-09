@@ -1,0 +1,4 @@
+data/
+__pycache__/
+# links into data/ + auto-refreshed STATUS.md: local only
+results/
