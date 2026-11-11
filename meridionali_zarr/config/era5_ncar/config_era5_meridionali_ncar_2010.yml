@@ -49,10 +49,10 @@ cds:
   backoff_seconds: 120
   request_timeout_hours: 24
 ncar:
-  workers: 2
+  workers: 12
   base_url: https://thredds.rda.ucar.edu/thredds/ncss/grid/files/g/d633000/e5.oper.an.pl
   max_retries: 5
-  backoff_seconds: 120
+  backoff_seconds: 60
   timeout_seconds: 600
 paths:
   raw: /home/andreiionita27/TopoPyScale-repo-github/downscaling/meridionali_zarr/data/era5_600-1000hPa_ncar/2010/raw

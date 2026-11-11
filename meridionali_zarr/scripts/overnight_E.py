@@ -36,6 +36,12 @@ Version 5b (9 Nov, user: "can't you download both at the same time?"): the CDS l
 every year in order (2012, 2011, 2010, ...), racing the NCAR lanes on the same years in separate stores; the first
 complete store is downscaled, an NCAR lane stops when CDS completes its year first, and the CDS lane skips years NCAR
 has already completed.
+Version 5c (9 Nov, user: "make our download have the same setup as hers", i.e. rila_pirin_zarr/run_era5_queue.sh):
+NCAR stores get 12 requests at a time per lane, 60 s backoff base, and their single levels from the CDS in one request
+per year (max_items_surf 121000, like rila_pirin_zarr/config/era5); pressure levels stay on NCAR. ncar_lane.py runs
+download twice back to back (second pass retries failed units), like her lanes.
+Version 5d (9 Nov, user: "take as much as you can from ncar also the single levels and keep cds running just as
+backup"): NCAR stores take single levels from NCAR OPeNDAP again; rest of 5c unchanged; CDS lane unchanged (backup).
 """
 import fcntl
 import filecmp
@@ -69,8 +75,8 @@ CLAIMS = MZ / 'data' / 'era5_claims'
 LEVELS = [600, 650, 700, 750, 775, 800, 825, 850, 875, 900, 925, 950, 975, 1000]
 
 START_DOWNSCALING = time.time() + max(0, 60 * 60 - (time.time() - 1793127420))   # Agisoft: not before 21:57 (user)
-NCAR_WORKERS = 2                 # version 4: gentle (was 8)
-NCAR_BACKOFF_S = 120             # downloader waits 2, 4, 8, 16 min between tries of a unit (was 60 s base)
+NCAR_WORKERS = 12                # version 5c: as rila_pirin_zarr (version 4: 2)
+NCAR_BACKOFF_S = 60              # version 5c: as rila_pirin_zarr, 1, 2, 4, 8, 16 min (version 4: 120 s base)
 NCAR_STALL_S = 45 * 60
 NCAR_RETRY_PAUSE_S = 15 * 60     # version 5: pause before an NCAR lane retries the same year
 
@@ -112,6 +118,8 @@ def era_cfg(year, source):
     cfg['cds'].update(workers=2, max_items_plev=60000, max_items_surf=60000)
     if source == 'cds':
         cfg['source'] = {'plev': 'cds', 'surf': 'cds'}
+    else:                                       # 5d (user): everything from NCAR; the CDS lane is the backup
+        cfg['source'] = {'plev': 'ncar', 'surf': 'ncar'}
     if source == 'cds':
         f = MZ / 'config' / 'era5' / f'config_era5_meridionali_{year}_cds.yml'
     else:                                       # own folder and name: never matched by other_writer() of the CDS lane

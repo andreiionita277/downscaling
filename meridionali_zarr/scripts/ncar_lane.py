@@ -1,5 +1,6 @@
 """
-One NCAR download lane (driver version 5, overnight_E.py). Run it 3 times (lanes ncar1, ncar2, ncar3) next to the
+One NCAR download lane (driver version 5c, overnight_E.py; settings as rila_pirin_zarr's queue lanes: 12 requests at a
+time, single levels from the CDS, two download passes per try). Run it 3 times (lanes ncar1, ncar2, ncar3) next to the
 driver; each lane takes the newest year that no other process has (claim files in data/era5_claims) and downloads it
 from NCAR into its own store data/era5_600-1000hPa_ncar/<year> (never the CDS store). User 9 Nov: "even if they fail,
 go on": a year is never given up; after an incomplete try the lane waits NCAR_RETRY_PAUSE_S and resumes the same year
@@ -41,16 +42,22 @@ def main():
             out = ov.LOGDIR / f'era5_{y}_ncar_{who}_try{attempt}_{time.strftime("%Y%m%d_%H%M")}.log'
             ov.log(f'{tag}**{y} ERA5 NCAR** try {attempt} -> `{out.relative_to(ov.MZ)}`')
             t0 = time.time()
-            p = ov.sh([ov.PY, ov.DL, str(f), 'download'], out)
-            while p.poll() is None:
-                time.sleep(60)
-                if ov.marker(y, 'cds').exists():                  # the CDS lane finished this year first
-                    p.terminate()
-                    p.wait(120)
+            # 5c: as rila_pirin_zarr's lanes: download, and if units failed, a second pass right away
+            for n_pass in (1, 2):
+                p = ov.sh([ov.PY, ov.DL, str(f), 'download'], out.with_name(out.stem + f'_pass{n_pass}.log'))
+                while p.poll() is None:
+                    time.sleep(60)
+                    if ov.marker(y, 'cds').exists():              # the CDS lane finished this year first
+                        p.terminate()
+                        p.wait(120)
+                        break
+                if p.returncode == 0 or ov.marker(y, 'cds').exists():
                     break
-            n_ok, n_fail = ov.tail_count(out, 'written and verified'), ov.tail_count(out, 'FAILED:')
-            ov.log(f'{tag}{y} ERA5 NCAR try {attempt} ended after {(time.time() - t0) / 60:.0f} min (exit {p.returncode}): '
-                   f'{n_ok} units written, {n_fail} given up this try, {ov.tail_count(out, "attempt ")} retried requests')
+            logs = [out.with_name(out.stem + f'_pass{k}.log') for k in range(1, n_pass + 1)]
+            cnt = lambda pat: sum(ov.tail_count(x, pat) for x in logs)        # noqa: E731
+            ov.log(f'{tag}{y} ERA5 NCAR try {attempt} ended after {(time.time() - t0) / 60:.0f} min, {n_pass} pass(es) '
+                   f'(exit {p.returncode}): {cnt("written and verified")} units written, {cnt("FAILED:")} given up, '
+                   f'{cnt("attempt ")} retried requests')
             if ov.marker(y, 'cds').exists():
                 continue                                            # -> "already complete from CDS"
             months = ov.incomplete_months(y, 'ncar')
