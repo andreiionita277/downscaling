@@ -127,7 +127,15 @@ def era_cfg(year, source):
     else:
         # 5f (user 15 Nov: "same setup like Nandhni"): pressure levels from NCAR, single levels from the CDS
         # (1-2 requests per year instead of 84 NCAR OPeNDAP requests; OPeNDAP overloaded since 5 Nov, rila_pirin_zarr/LOG.md)
-        cfg['source'] = {'plev': 'ncar', 'surf': 'cds'}
+        # 5g (user 19 Nov 11:50: "if ncar works we want both pressure levels and single levels from ncar"): single levels
+        # from NCAR too (OPeNDAP tested 19 Nov: t2m 75 s, tp 285 s per month, ~3 h/year next to the 5 h of pressure
+        # levels). A year whose store was already started with CDS single levels keeps them (one source per year;
+        # CDS and NCAR values agree to float rounding: 2008 both ways, t2m max diff 0.0002 K, tp 1.4e-6 m).
+        surf = 'ncar'
+        store = base / 'ERA5.zarr'
+        if store.exists() and 'single levels from cds' in xr.open_zarr(store).attrs.get('source', ''):
+            surf = 'cds'
+        cfg['source'] = {'plev': 'ncar', 'surf': surf}
         cfg['ncar'].update(timeout_seconds=NCAR_TIMEOUT_S, connect_timeout_seconds=NCAR_CONNECT_TIMEOUT_S,
                            max_backoff_seconds=NCAR_MAX_BACKOFF_S)
     if source == 'cds':
