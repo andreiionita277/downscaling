@@ -58,6 +58,8 @@ for y in "$@"; do
   if [ ! -L $out ]; then
     raw=$(du -sh --apparent-size $out | cut -f1)
     # 3 files at a time: 12 at once ran out of memory (23 GB RAM) on 13 Nov; already compressed files are skipped
+    # 17 Nov: compression + a downscaling (peak 11 GB) ran out of memory (signal 9) -> wait until no downscaling runs
+    while ps -eo args | awk '$2 ~ /run_year_public\.py$/' | grep -q .; do sleep 60; done
     okc=1; ls $out/chunk_*/output/pro/PRO_*.nc | xargs -P 3 -n 1 $PY $MZ/scripts/compress_pro.py >> $L/compress_$hy.log 2>&1 || okc=0
     [ $okc = 1 ] || { note "**HY $hy compression FAILED** -> $L/compress_$hy.log; STOPPED (uncompressed output kept)"; exit 1; }
     note "HY $hy: Crocus OK, compressed $raw -> $(du -sh --apparent-size $out | cut -f1) (all values checked identical)"
